@@ -6,7 +6,7 @@
 
 ## 1. Executive Summary
 
-The repository's verification gate is green — `pnpm check` passes (lint, typecheck, 4 tests, build). That is the most important fact here: **every defect below ships today with no signal.**
+This register describes the repository **at baseline commit `c902ee6`**. The verification gate was green there — `pnpm check` passed (lint, typecheck, 4 tests, build). That is the most important fact here: **at baseline, the green gate would have allowed every defect below to ship without a signal.** Findings are recorded as they existed at baseline; `PLAN.md` records what the selected slice subsequently changed.
 
 Five release-blocking risks, four of them reproduced:
 
@@ -22,7 +22,7 @@ Risks 2–4 corrupt an audit history the business is expected to trust; risk 1 i
 
 ## 2. Current Release Assessment
 
-**Recommendation: do not release.** Five P0s are open. Fixing the selected slice does not make the system production-ready — it makes **one boundary** (what a customer is shown, and what may change it) trustworthy and provable. NOTIF-1 must be fixed before production regardless of this slice.
+**Recommendation: do not release.** At baseline, five P0s blocked release. The selected slice addresses AUTHZ-1 and ING-1 to ING-3 within the exercise boundary. **NOTIF-1 remains open and unmitigated.** The resulting submission is still not production-ready: notification reliability and the documented production blockers — customer authentication, partner authentication, future-dated events — remain unresolved. The slice makes **one boundary** (what a customer is shown, and what may change it) trustworthy and provable; it does not make the system releasable.
 
 ## 3. Prioritization Method
 
@@ -89,7 +89,9 @@ Register rows above give location and impact; this section adds evidence, failur
 
 ## 6. Selected Vertical Slice
 
-> **Protect the trustworthiness of the customer-visible application boundary: only the owning customer can read an application, and only unique, ordered, valid partner events can change its state, history and notification intent.**
+> **Protect the trustworthiness of the customer-visible application boundary: within the exercise identity model, an application is readable only under its owning customer identity, and only unique, ordered, valid partner events can change its state, history and notification intent.**
+
+The identity itself is still caller-supplied (`x-customer-id`). Ownership enforcement and identity authentication are separate controls; only the former is implemented.
 
 **In scope:** AUTHZ-1, ING-1, ING-2, ING-3, ING-4, API-1, API-2, and slice-scoped tests (TEST-1).
 
@@ -105,13 +107,13 @@ Defined before implementation. The verifying test is named in §10.
 
 | # | Invariant | Test |
 |---|---|---|
-| I1 | A customer can never retrieve another customer's application | T1 |
+| I1 | Given the exercise identity input, a read returns only an application belonging to that stated customer | T1 |
 | I2 | An inaccessible application and a nonexistent one are indistinguishable | T1 |
 | I3 | One logical partner event has at most one accepted domain effect | T4 |
 | I4 | Current state is the newest accepted valid event, not the last request received | T5, T6 |
 | I5 | Only allowed lifecycle transitions may change state | T7 (rejected), T11 (accepted) |
 | I6 | Terminal states remain terminal | T7 |
-| I7 | An accepted transition updates state, history and notification intent atomically | T3; T10 gives rollback evidence only if the conflict path is reached |
+| I7 | An accepted transition updates state, history and notification intent atomically | T3 verifies the successful three-effect write; code inspection verifies the three writes share one Prisma transaction. Rollback was not directly exercised — T10 would evidence it only if the unique-conflict path were reached, which it was not under SQLite |
 | I8 | Customer-visible history contains only accepted business transitions | T5, T7 |
 | I9 | A partner acknowledgement exposes no customer PII | T2 |
 | I10 | Duplicate, stale, invalid, malformed, unknown and accepted requests are operationally distinguishable | T1, T4, T5, T7, T8 |
@@ -167,7 +169,7 @@ Exercise assumptions, each requiring confirmation in the production partner cont
 
 | ID | Question | Decision | Consequence if wrong |
 |---|---|---|---|
-| A1 | Is `eventId` unique per partner feed or per application? | **Per application** — the domain does not guarantee feed-global uniqueness. Uniqueness scoped as history `(applicationId, sourceEventId)` and notification intent `(applicationId, sourceEventId, type)`. | If ids are feed-global, a cross-application replay would be accepted twice — detectable. Tightening to a global constraint later is the **risky** direction: existing cross-application `sourceEventId` collisions are legal under this scope and must all be audited and resolved before the narrower index can be built. |
+| A1 | Is `eventId` unique per partner feed or per application? | **Per application** — the domain does not guarantee feed-global uniqueness. Uniqueness scoped as history `(applicationId, sourceEventId)` and notification intent `(applicationId, sourceEventId, type)`. | Feed-global uniqueness is the **stricter** constraint. Adopting it without a confirmed partner contract risks rejecting legitimate events; moving to it later requires auditing and resolving every existing cross-application `sourceEventId` collision, which is legal under the current per-application scope. Under the current scope a cross-application replay would be accepted twice — detectable, and the weaker guarantee is the safer default absent contract evidence. |
 | A2 | Are stale events rejected, audited separately, or added to customer-visible history? | Rejected `409`, no mutation, not added to customer-visible history. | Late deliveries leave no record. A separate ingestion audit log is proposed in `DESIGN.md`. |
 | A3 | How are equal `occurredAt` timestamps resolved? | First accepted wins. | Deterministic without partner sequence numbers; a monotonic sequence number in the contract would be strictly better. |
 | A4 | Is a same-state event with a different `eventId` invalid or a valid reaffirmation? | **Invalid — `409`. This is an assumption**, based on the documented lifecycle containing no self-loop. | If the partner legitimately reaffirms state, valid events are rejected. Visible immediately as `409`s, not silent. |
@@ -188,3 +190,5 @@ Real but lower-value; not tracked as issues. Carried into `PLAN.md`.
 - **No dependency-aware readiness endpoint.** `/health` (`apps/api/src/app.ts:22`) is a valid liveness probe; there is no readiness signal that checks the database.
 - **`cors: { origin: true }`** (`apps/api/src/app.ts:20`) reflects any origin — acceptable locally, not for production.
 - **Per-job application query in the worker** (`process-notifications.ts:37-40`) and a redundant re-read after write (`application-service.ts:92`).
+- **An `eventId` reused with a different payload is reported as a duplicate, not a conflict.** Ingestion matches `(applicationId, sourceEventId)` and returns `duplicate` before comparing status, `occurredAt` or `reason` (`application-service.ts`, the `alreadyRecorded` check selects only `id`). This is correct only if the partner guarantees one event id permanently identifies one immutable payload — an assumption the repository does not state. Production evolution is proposed in `DESIGN.md` §3: persist a canonical fingerprint of the immutable event fields and distinguish `duplicate` from `event_id_conflict`.
+- **Uniqueness constraints do not serialize different event ids for the same application.** Two concurrent deliveries with different `eventId` values can both read the same application state and both pass staleness and transition validation before writing. The constraints protect event *identity*, not application state. SQLite serialized these writes in the test environment, which is a property of the exercise database rather than evidence that the production race is resolved. Production evolution is proposed in `DESIGN.md` §4.
