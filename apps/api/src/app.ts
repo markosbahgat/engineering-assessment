@@ -3,15 +3,23 @@ import { prisma, type PrismaClient } from "@assessment/database";
 import cors from "@fastify/cors";
 import Fastify from "fastify";
 import {
-  ApplicationNotFoundError,
   getApplication,
   recordStatusEvent,
+  type StatusEventOutcome,
 } from "./application-service.js";
 
 interface BuildAppOptions {
   database?: PrismaClient;
   logger?: boolean;
 }
+
+const OUTCOME_STATUS_CODE: Record<StatusEventOutcome["kind"], number> = {
+  accepted: 202,
+  duplicate: 200,
+  stale: 409,
+  invalid_transition: 409,
+  unknown_application: 404,
+};
 
 export function buildApp(options: BuildAppOptions = {}) {
   const database = options.database ?? prisma;
@@ -32,6 +40,7 @@ export function buildApp(options: BuildAppOptions = {}) {
       const application = await getApplication(
         database,
         request.params.applicationId,
+        customerId,
       );
 
       if (!application) {
@@ -58,19 +67,17 @@ export function buildApp(options: BuildAppOptions = {}) {
         "received partner status event",
       );
 
-      try {
-        const application = await recordStatusEvent(
-          database,
-          request.params.applicationId,
-          parsed.data,
-        );
-        return reply.code(202).send({ application });
-      } catch (error) {
-        if (error instanceof ApplicationNotFoundError) {
-          return reply.code(404).send({ error: "application not found" });
-        }
-        throw error;
-      }
+      const outcome = await recordStatusEvent(
+        database,
+        request.params.applicationId,
+        parsed.data,
+      );
+
+      return reply.code(OUTCOME_STATUS_CODE[outcome.kind]).send({
+        outcome: outcome.kind,
+        eventId: parsed.data.eventId,
+        applicationId: request.params.applicationId,
+      });
     },
   );
 
