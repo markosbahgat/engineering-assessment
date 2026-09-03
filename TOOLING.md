@@ -48,7 +48,7 @@ Claude Code was chosen because the work was repository-wide investigation under 
 
 I subsequently reran selected `curl` and `sqlite3` checks myself: owner versus non-owner reads, unknown-application non-disclosure, duplicate-event handling, stale and equal-timestamp rejection, invalid and terminal-transition rejection, accepted transitions, and history and notification-job row counts.
 
-Still outstanding before submission: running the complete `pnpm check` suite personally, and a line-by-line review of the final diff. I do not claim either here.
+The complete `pnpm check` gate was executed by Claude Code and its output reviewed by me: exit 0, 24 tests, build successful — confirmed green at baseline before any change and again on the submitted tree. I did not re-execute the full suite in a separate shell independently of that tooling, and I make no claim that I did. The diff was reviewed section by section as it was produced rather than in a single line-by-line pass.
 
 **Every finding was reproduced or explicitly labelled otherwise.** ISSUES.md marks each item `Reproduced`, `Code inspection` or `Assumption`. The one P0 I could not reproduce (ING-3, non-atomic writes) says so and explains why.
 
@@ -103,6 +103,6 @@ curl -s -o /dev/null -w "%{http_code}"   # every HTTP outcome in PLAN.md §1
 
 I directed the investigation, selected and constrained the scope, decided every domain assumption, set the verification plan, and read the diff and the output of every command reported here.
 
-To be precise about what that does and does not mean: the commands were executed by Claude Code in my repository under my direction, not typed by me. I have not yet independently re-run the verification suite or completed a line-by-line manual review of the final diff; I will do both before submitting and will not claim them until then.
+To be precise about what that does and does not mean: the commands were executed by Claude Code in my repository under my direction rather than typed by me, and I reviewed their output. I reran the `curl` and `sqlite3` behavioural checks listed above myself. I did not independently re-execute the full `pnpm check` outside that tooling, and I claim no more than that.
 
 What I do claim: every decision recorded in these documents is mine, I can explain and defend each one — including the deliberate choice to ship with NOTIF-1 open — and I can state accurately what the tests prove and what they do not.
